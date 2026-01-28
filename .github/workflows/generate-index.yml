@@ -3,14 +3,14 @@ name: Auto Generate Image Index
 on:
   push:
     paths:
-      - 'Galary/**' # Chỉ chạy khi có thay đổi trong thư mục Galary
-  workflow_dispatch: # Cho phép bấm chạy thủ công
+      - '**.webp' # Chạy khi có ảnh .webp mới
+  workflow_dispatch: # Cho phép bấm nút chạy thủ công
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Cấp quyền để action có thể commit ngược lại repo
+      contents: write
 
     steps:
       - name: Checkout Code
@@ -28,38 +28,40 @@ jobs:
           from PIL import Image
           
           results = []
-          if not os.path.exists('Galary'):
-              print('Folder Galary not found')
-              exit(0)
+          # Quét tất cả file .webp ở thư mục gốc của repo 12A1-Galary
+          files = [f for f in os.listdir('.') if f.endswith('.webp')]
+          
+          def get_num(name):
+              try: return int(name.split('.')[0])
+              except: return 0
               
-          files = [f for f in os.listdir('Galary') if f.endswith('.webp')]
-          files.sort(key=lambda x: int(x.split('.')[0]), reverse=True)
+          # Sắp xếp ảnh mới nhất lên đầu (số lớn nhất)
+          files.sort(key=get_num, reverse=True)
           
           for filename in files:
               try:
-                  with Image.open(os.path.join('Galary', filename)) as img:
+                  with Image.open(filename) as img:
                       width, height = img.size
                       results.append({
-                          'i': int(filename.split('.')[0]),
+                          'i': get_num(filename),
                           'w': width,
                           'h': height
                       })
               except Exception as e:
                   print(f'Error processing {filename}: {e}')
                   
-          with open('Galary/images.json', 'w') as f:
+          with open('images.json', 'w') as f:
               json.dump(results, f)
           "
-          echo "Generated images.json with metadata:"
-          cat Galary/images.json
+          echo "Generated images.json:"
+          cat images.json
 
       - name: Commit and Push
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add Galary/images.json
+          git add images.json
           
-          # Chỉ commit nếu có thay đổi
           if git diff --staged --quiet; then
             echo "No changes in images.json"
           else
