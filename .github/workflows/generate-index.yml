@@ -1,0 +1,68 @@
+name: Auto Generate Image Index
+
+on:
+  push:
+    paths:
+      - 'Galary/**' # Chỉ chạy khi có thay đổi trong thư mục Galary
+  workflow_dispatch: # Cho phép bấm chạy thủ công
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Cấp quyền để action có thể commit ngược lại repo
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python and Install Dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install Pillow
+
+      - name: Generate JSON Index with Metadata
+        run: |
+          python3 -c "
+          import os, json
+          from PIL import Image
+          
+          results = []
+          if not os.path.exists('Galary'):
+              print('Folder Galary not found')
+              exit(0)
+              
+          files = [f for f in os.listdir('Galary') if f.endswith('.webp')]
+          files.sort(key=lambda x: int(x.split('.')[0]), reverse=True)
+          
+          for filename in files:
+              try:
+                  with Image.open(os.path.join('Galary', filename)) as img:
+                      width, height = img.size
+                      results.append({
+                          'i': int(filename.split('.')[0]),
+                          'w': width,
+                          'h': height
+                      })
+              except Exception as e:
+                  print(f'Error processing {filename}: {e}')
+                  
+          with open('Galary/images.json', 'w') as f:
+              json.dump(results, f)
+          "
+          echo "Generated images.json with metadata:"
+          cat Galary/images.json
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add Galary/images.json
+          
+          # Chỉ commit nếu có thay đổi
+          if git diff --staged --quiet; then
+            echo "No changes in images.json"
+          else
+            git commit -m "🚀 Auto-update images list [skip ci]"
+            git push
+          fi
