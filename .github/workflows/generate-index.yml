@@ -78,14 +78,17 @@ jobs:
               now = datetime.datetime.now() + datetime.timedelta(hours=7)
               time_str = now.strftime('%H:%M %d/%m')
 
-              # Thêm từng dòng riêng biệt cho mỗi ảnh
-              for a in added:
-                  logs.append({'m': f'📥 Đã thêm ảnh {a} lúc {time_str}', 't': int(now.timestamp() * 1000)})
+              msg_parts = []
+              if added:
+                  msg_parts.append(f'Vừa thêm ảnh: {", ".join(map(str, added))}')
+              if deleted:
+                  msg_parts.append(f'Đã xóa ảnh: {", ".join(map(str, deleted))}')
               
-              for d in deleted:
-                  logs.append({'m': f'🗑 Đã xóa ảnh {d} lúc {time_str}', 't': int(now.timestamp() * 1000)})
-
-              logs = logs[-500:] # Lưu 500 dòng gần nhất
+              final_msg = ". ".join(msg_parts) + f" lúc {time_str}"
+              
+              # Ghi đè chỉ 1 dòng duy nhất
+              logs = [{'m': final_msg, 't': int(now.timestamp() * 1000)}]
+              
               with open(log_file, 'w', encoding='utf-8') as f:
                   json.dump(logs, f, ensure_ascii=False, indent=2)
           "
