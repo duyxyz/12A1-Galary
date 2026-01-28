@@ -1,63 +1,94 @@
 name: Bot Thu Ky Nong Bong
 
-on: [push]
+on:
+  push:
+    paths:
+      - '*.webp'
+  workflow_dispatch:
 
 jobs:
-  telegram:
+  notify-and-log:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Preparing Information
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Preparing Information & Telegram
         id: vars
         run: |
-          # Lấy danh sách file thay đổi
-          ADDED=$(git diff --name-only --diff-filter=A ${{ github.event.before }} ${{ github.event.after }} | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
-          DELETED=$(git diff --name-only --diff-filter=D ${{ github.event.before }} ${{ github.event.after }} | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
-          MODIFIED=$(git diff --name-only --diff-filter=M ${{ github.event.before }} ${{ github.event.after }} | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
+          # Lấy danh sách file thay đổi (chỉ quan tâm đến file số .webp ở gốc)
+          ADDED=$(git diff --name-only --diff-filter=A ${{ github.event.before }} ${{ github.event.after }} | grep "^[0-9]\+\.webp$" | sed 's/\.webp//g' | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
+          DELETED=$(git diff --name-only --diff-filter=D ${{ github.event.before }} ${{ github.event.after }} | grep "^[0-9]\+\.webp$" | sed 's/\.webp//g' | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
           
           echo "added=$ADDED" >> $GITHUB_OUTPUT
           echo "deleted=$DELETED" >> $GITHUB_OUTPUT
-          echo "modified=$MODIFIED" >> $GITHUB_OUTPUT
           echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Sending Notification
-        run: |
+          # Gửi Telegram (giữ nguyên phong cách cũ)
           REPO="${{ github.repository }}"
-          BRANCH="${{ github.ref_name }}"
           ACTOR="${{ github.actor }}"
           COMMIT_MSG="${{ github.event.head_commit.message }}"
           COMMIT_URL="${{ github.event.head_commit.url }}"
-          SHA="${{ steps.vars.outputs.sha_short }}"
           
-          # Xây dựng nội dung tin nhắn với phong cách Technical 2D
-          MSG="� <b>GITHUB SYSTEM UPDATE Branch Test</b>%0A%0A"
+          MSG="🏠 <b>GITHUB SYSTEM UPDATE</b>%0A%0A"
           MSG="$MSG👤 <b>User:</b> <code>$ACTOR</code>%0A"
-          MSG="$MSG� <b>Repo:</b> <code>$REPO</code>%0A"
-          MSG="$MSG🔘 <b>Branch:</b> <code>$BRANCH</code>%0A%0A"
+          MSG="$MSG📦 <b>Commit:</b> <code>$COMMIT_MSG</code>%0A"
           
-          MSG="$MSG� <b>Commit:</b>%0A<code>$COMMIT_MSG</code>%0A%0A"
+          if [ ! -z "$ADDED" ]; then MSG="$MSG📥 <b>Added:</b> <code>$ADDED</code>%0A"; fi
+          if [ ! -z "$DELETED" ]; then MSG="$MSG🗑 <b>Deleted:</b> <code>$DELETED</code>%0A"; fi
           
-          if [ ! -z "${{ steps.vars.outputs.added }}" ]; then
-            MSG="$MSG📥 <b>Added:</b>%0A<code>${{ steps.vars.outputs.added }}</code>%0A"
-          fi
-          
-          if [ ! -z "${{ steps.vars.outputs.modified }}" ]; then
-            MSG="$MSG� <b>Modified:</b>%0A<code>${{ steps.vars.outputs.modified }}</code>%0A"
-          fi
-          
-          if [ ! -z "${{ steps.vars.outputs.deleted }}" ]; then
-            MSG="$MSG🗑 <b>Deleted:</b>%0A<code>${{ steps.vars.outputs.deleted }}</code>%0A"
-          fi
-          
-          MSG="$MSG%0A🌐 <a href='$COMMIT_URL'>Review on GitHub (SHA: $SHA)</a>%0A"
+          MSG="$MSG%0A🌐 <a href='$COMMIT_URL'>Review on GitHub</a>"
 
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
-          -d chat_id="${{ secrets.TELEGRAM_TO }}" \
-          -d text="$MSG" \
-          -d parse_mode="HTML" \
-          -d disable_web_page_preview=true
+          # Chỉ gửi Tele nếu có token
+          if [ ! -z "${{ secrets.TELEGRAM_TOKEN }}" ]; then
+            curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_TO }}" \
+            -d text="$MSG" \
+            -d parse_mode="HTML" \
+            -d disable_web_page_preview=true
+          fi
+
+      - name: Update log.json (1 line only, no icons)
+        run: |
+          python3 -c "
+          import os, json, datetime
           
+          added = '${{ steps.vars.outputs.added }}'
+          deleted = '${{ steps.vars.outputs.deleted }}'
+          
+          if added or deleted:
+              now = datetime.datetime.now() + datetime.timedelta(hours=7)
+              time_str = now.strftime('%H:%M %d/%m')
+              
+              parts = []
+              if added: parts.append(f'Vừa thêm ảnh: {added}')
+              if deleted: parts.append(f'Đã xóa ảnh: {deleted}')
+              
+              final_msg = '. '.join(parts) + f' lúc {time_str}'
+              log_data = [{'m': final_msg, 't': int(now.timestamp() * 1000)}]
+              
+              with open('log.json', 'w', encoding='utf-8') as f:
+                  json.dump(log_data, f, ensure_ascii=False, indent=2)
+          "
+
+      - name: Commit log.json
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add log.json
+          if git diff --staged --quiet; then
+            echo "No changes in log.json"
+          else
+            git commit -m "Auto-update log.json [skip ci]"
+            git push
+          fi

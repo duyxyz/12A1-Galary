@@ -1,15 +1,10 @@
-name: Auto Generate Index and Log
+name: Auto Generate Image Index
 
 on:
   push:
     paths:
-      - '*.webp'
+      - '*.webp' # Chạy khi có ảnh .webp ở thư mục gốc
   workflow_dispatch:
-
-# 🛡️ Chống chạy song song để tránh ghi đè file log.json
-concurrency:
-  group: log-update
-  cancel-in-progress: false
 
 jobs:
   build:
@@ -20,83 +15,49 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: Generate Index and Append Log
+      - name: Set up Python and Install Dependencies
         run: |
+          python3 -m pip install --upgrade pip
           python3 -m pip install Pillow
+
+      - name: Generate JSON Index with Metadata
+        run: |
           python3 -c "
-          import os, json, datetime
+          import os, json
           from PIL import Image
 
-          # --- 1. ĐỌC DỮ LIỆU CŨ ---
-          old_indices = set()
-          if os.path.exists('images.json'):
-              try:
-                  with open('images.json', 'r') as f:
-                      old_data = json.load(f)
-                      old_indices = {int(item['i']) for item in old_data if 'i' in item}
-              except: pass
-
-          # --- 2. QUÉT THỰC TẾ & TẠO INDEX MỚI ---
-          new_results = []
+          results = []
+          # Quét ảnh ở thư mục gốc
           files = [f for f in os.listdir('.') if f.endswith('.webp')]
+          # Sắp xếp theo số thứ tự (tên file là số)
           files.sort(key=lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 0, reverse=True)
-          
-          current_indices = set()
+
           for filename in files:
               try:
-                  num = int(filename.split('.')[0])
-                  current_indices.add(num)
                   with Image.open(filename) as img:
-                      w, h = img.size
-                      new_results.append({'i': num, 'w': w, 'h': h})
-              except: pass
-          
+                      width, height = img.size
+                      results.append({
+                          'i': int(filename.split('.')[0]),
+                          'w': width,
+                          'h': height
+                      })
+              except Exception as e:
+                  print(f'Error processing {filename}: {e}')
+
           with open('images.json', 'w') as f:
-              json.dump(new_results, f)
-
-          # --- 3. TẠO NHẬT KÝ KIỂU BOT (TÁCH RIÊNG TỪNG DÒNG) ---
-          added = sorted(list(current_indices - old_indices))
-          deleted = sorted(list(old_indices - current_indices))
-
-          if added or deleted:
-              log_file = 'log.json'
-              logs = []
-              if os.path.exists(log_file):
-                  try:
-                      with open(log_file, 'r', encoding='utf-8') as f:
-                          logs = json.load(f)
-                  except: pass
-
-              now = datetime.datetime.now() + datetime.timedelta(hours=7)
-              time_str = now.strftime('%H:%M %d/%m')
-
-              msg_parts = []
-              if added:
-                  msg_parts.append(f'Vừa thêm ảnh: {", ".join(map(str, added))}')
-              if deleted:
-                  msg_parts.append(f'Đã xóa ảnh: {", ".join(map(str, deleted))}')
-              
-              final_msg = ". ".join(msg_parts) + f" lúc {time_str}"
-              
-              # Ghi đè chỉ 1 dòng duy nhất
-              logs = [{'m': final_msg, 't': int(now.timestamp() * 1000)}]
-              
-              with open(log_file, 'w', encoding='utf-8') as f:
-                  json.dump(logs, f, ensure_ascii=False, indent=2)
+              json.dump(results, f)
           "
 
       - name: Commit and Push
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add images.json log.json
-          git commit -m "Auto-update index and log [skip ci]" || echo "No changes"
-          git push
+          git add images.json
+
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "🚀 Auto-update images list [skip ci]"
+            git push
+          fi
