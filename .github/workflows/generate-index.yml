@@ -3,8 +3,13 @@ name: Auto Generate Index and Log
 on:
   push:
     paths:
-      - '*.webp' # Chạy khi có ảnh .webp được thêm hoặc xóa ở thư mục gốc
+      - '*.webp'
   workflow_dispatch:
+
+# 🛡️ Chống chạy song song để tránh ghi đè file log.json
+concurrency:
+  group: log-update
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -16,7 +21,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2 # Cần xem commit trước để biết file nào bị xóa
+          fetch-depth: 2
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -24,61 +29,63 @@ jobs:
           python-version: '3.x'
 
       - name: Generate Index and Append Log
-        env:
-          GITHUB_SHA: ${{ github.sha }}
         run: |
           python3 -m pip install Pillow
           python3 -c "
           import os, json, datetime
           from PIL import Image
 
-          # 1. Cập nhật images.json (Danh sách ảnh hiện tại)
-          results = []
-          files = [f for f in os.listdir('.') if f.endswith('.webp')]
-          # Sắp xếp theo số thứ tự giảm dần
-          files.sort(key=lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 0, reverse=True)
-
-          for filename in files:
+          # --- 1. ĐỌC DỮ LIỆU CŨ ---
+          old_indices = set()
+          if os.path.exists('images.json'):
               try:
-                  with Image.open(filename) as img:
-                      width, height = img.size
-                      results.append({'i': int(filename.split('.')[0]), 'w': width, 'h': height})
+                  with open('images.json', 'r') as f:
+                      old_data = json.load(f)
+                      old_indices = {int(item['i']) for item in old_data if 'i' in item}
               except: pass
 
-          with open('images.json', 'w') as f:
-              json.dump(results, f)
-
-          # 2. Cập nhật log.json (Nhật ký thay đổi)
-          log_file = 'log.json'
-          logs = []
-          if os.path.exists(log_file):
+          # --- 2. QUÉT THỰC TẾ & TẠO INDEX MỚI ---
+          new_results = []
+          files = [f for f in os.listdir('.') if f.endswith('.webp')]
+          files.sort(key=lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 0, reverse=True)
+          
+          current_indices = set()
+          for filename in files:
               try:
-                  with open(log_file, 'r', encoding='utf-8') as f:
-                      logs = json.load(f)
-              except: logs = []
+                  num = int(filename.split('.')[0])
+                  current_indices.add(num)
+                  with Image.open(filename) as img:
+                      w, h = img.size
+                      new_results.append({'i': num, 'w': w, 'h': h})
+              except: pass
+          
+          with open('images.json', 'w') as f:
+              json.dump(new_results, f)
 
-          # Lấy danh sách file thay đổi bằng Python để tránh lỗi ký tự rác
-          changed_raw = os.popen('git diff-tree --no-commit-id --name-status -r HEAD').read().splitlines()
+          # --- 3. TẠO NHẬT KÝ KIỂU BOT (TÁCH RIÊNG TỪNG DÒNG) ---
+          added = sorted(list(current_indices - old_indices))
+          deleted = sorted(list(old_indices - current_indices))
 
-          now = datetime.datetime.now() + datetime.timedelta(hours=7) # VN Time
-          time_str = now.strftime('%H:%M %d/%m')
+          if added or deleted:
+              log_file = 'log.json'
+              logs = []
+              if os.path.exists(log_file):
+                  try:
+                      with open(log_file, 'r', encoding='utf-8') as f:
+                          logs = json.load(f)
+                  except: pass
 
-          new_entries = []
-          for line in changed_raw:
-              parts = line.split()
-              if len(parts) < 2: continue
-              status, filepath = parts[0], parts[1]
+              now = datetime.datetime.now() + datetime.timedelta(hours=7)
+              time_str = now.strftime('%H:%M %d/%m')
+
+              # Thêm từng dòng riêng biệt cho mỗi ảnh
+              for a in added:
+                  logs.append({'m': f'📥 Đã thêm ảnh {a} lúc {time_str}', 't': int(now.timestamp() * 1000)})
               
-              if filepath.endswith('.webp'):
-                  num = filepath.replace('.webp', '')
-                  if status == 'A':
-                      new_entries.append({'m': f'Vừa thêm ảnh {num} lúc {time_str}', 't': int(now.timestamp() * 1000)})
-                  elif status == 'D':
-                      new_entries.append({'m': f'Đã xóa ảnh {num} lúc {time_str}', 't': int(now.timestamp() * 1000)})
+              for d in deleted:
+                  logs.append({'m': f'🗑 Đã xóa ảnh {d} lúc {time_str}', 't': int(now.timestamp() * 1000)})
 
-          if new_entries:
-              logs.extend(new_entries)
-              logs = logs[-50:] # Giữ 50 dòng
+              logs = logs[-500:] # Lưu 500 dòng gần nhất
               with open(log_file, 'w', encoding='utf-8') as f:
                   json.dump(logs, f, ensure_ascii=False, indent=2)
           "
@@ -88,5 +95,5 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add images.json log.json
-          git commit -m " Auto-update index and log [skip ci]" || echo "No changes"
+          git commit -m "Auto-update index and log [skip ci]" || echo "No changes"
           git push
