@@ -1,9 +1,6 @@
 name: Bot Thu Ky Nong Bong
 
-on:
-  push:
-    branches:
-      - main # Chỉ báo khi đẩy vào nhánh chính
+on: [push]
 
 jobs:
   telegram:
@@ -17,41 +14,50 @@ jobs:
       - name: Preparing Information
         id: vars
         run: |
-          # Lấy danh sách file thay đổi (Ảnh mới, xóa ảnh...)
-          ADDED=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} --diff-filter=A | grep -E '\.webp$' || true)
-          DELETED=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} --diff-filter=D | grep -E '\.webp$' || true)
+          # Lấy danh sách file thay đổi
+          ADDED=$(git diff --name-only --diff-filter=A ${{ github.event.before }} ${{ github.event.after }} | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
+          DELETED=$(git diff --name-only --diff-filter=D ${{ github.event.before }} ${{ github.event.after }} | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
+          MODIFIED=$(git diff --name-only --diff-filter=M ${{ github.event.before }} ${{ github.event.after }} | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')
           
-          # Đếm số lượng
-          COUNT_ADD=$(echo "$ADDED" | grep -c '\.webp' || echo 0)
-          COUNT_DEL=$(echo "$DELETED" | grep -c '\.webp' || echo 0)
-          
-          echo "added_count=$COUNT_ADD" >> $GITHUB_OUTPUT
-          echo "deleted_count=$COUNT_DEL" >> $GITHUB_OUTPUT
+          echo "added=$ADDED" >> $GITHUB_OUTPUT
+          echo "deleted=$DELETED" >> $GITHUB_OUTPUT
+          echo "modified=$MODIFIED" >> $GITHUB_OUTPUT
           echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
       - name: Sending Notification
-        if: steps.vars.outputs.added_count > 0 || steps.vars.outputs.deleted_count > 0
         run: |
-          REPO="12A1-Galary"
+          REPO="${{ github.repository }}"
+          BRANCH="${{ github.ref_name }}"
           ACTOR="${{ github.actor }}"
-          SHA="${{ steps.vars.outputs.sha_short }}"
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
           COMMIT_URL="${{ github.event.head_commit.url }}"
+          SHA="${{ steps.vars.outputs.sha_short }}"
           
-          MSG="📸 <b>THƯ VIỆN 12A1 CẬP NHẬT</b>%0A%0A"
-          MSG="$MSG👤 <b>Người thực hiện:</b> <code>$ACTOR</code>%0A"
+          # Xây dựng nội dung tin nhắn với phong cách Technical 2D
+          MSG="� <b>GITHUB SYSTEM UPDATE Branch Test</b>%0A%0A"
+          MSG="$MSG👤 <b>User:</b> <code>$ACTOR</code>%0A"
+          MSG="$MSG� <b>Repo:</b> <code>$REPO</code>%0A"
+          MSG="$MSG🔘 <b>Branch:</b> <code>$BRANCH</code>%0A%0A"
           
-          if [ "${{ steps.vars.outputs.added_count }}" -gt 0 ]; then
-            MSG="$MSG📥 <b>Mới thêm:</b> <code>${{ steps.vars.outputs.added_count }} ảnh mới</code>%0A"
+          MSG="$MSG� <b>Commit:</b>%0A<code>$COMMIT_MSG</code>%0A%0A"
+          
+          if [ ! -z "${{ steps.vars.outputs.added }}" ]; then
+            MSG="$MSG📥 <b>Added:</b>%0A<code>${{ steps.vars.outputs.added }}</code>%0A"
           fi
           
-          if [ "${{ steps.vars.outputs.deleted_count }}" -gt 0 ]; then
-            MSG="$MSG🗑 <b>Đã xóa:</b> <code>${{ steps.vars.outputs.deleted_count }} ảnh</code>%0A"
+          if [ ! -z "${{ steps.vars.outputs.modified }}" ]; then
+            MSG="$MSG� <b>Modified:</b>%0A<code>${{ steps.vars.outputs.modified }}</code>%0A"
           fi
           
-          MSG="$MSG%0A🌐 <a href='$COMMIT_URL'>Xem chi tiết (SHA: $SHA)</a>"
+          if [ ! -z "${{ steps.vars.outputs.deleted }}" ]; then
+            MSG="$MSG🗑 <b>Deleted:</b>%0A<code>${{ steps.vars.outputs.deleted }}</code>%0A"
+          fi
+          
+          MSG="$MSG%0A🌐 <a href='$COMMIT_URL'>Review on GitHub (SHA: $SHA)</a>%0A"
 
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
           -d chat_id="${{ secrets.TELEGRAM_TO }}" \
           -d text="$MSG" \
           -d parse_mode="HTML" \
           -d disable_web_page_preview=true
+          
