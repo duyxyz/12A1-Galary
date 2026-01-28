@@ -3,64 +3,74 @@ name: Auto Generate Image Index
 on:
   push:
     paths:
-      - '*.webp' # Chạy khi có ảnh .webp ở thư mục gốc
-  workflow_dispatch: # Cho phép bấm chạy thủ công
+      - '*.webp'
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Cấp quyền để action có thể commit ngược lại repo
+      contents: write
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Set up Python and Install Dependencies
-        run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install Pillow
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
 
-      - name: Generate JSON Index with Metadata
+      - name: Install Dependencies
+        run: pip install Pillow
+
+      - name: Generate Index
         run: |
           python3 -c "
           import os, json
           from PIL import Image
 
           results = []
-          # Quét ảnh ở thư mục gốc (.)
+          # Quét tất cả file .webp ở thư mục gốc
           files = [f for f in os.listdir('.') if f.endswith('.webp')]
-          # Sắp xếp theo số thứ tự (tên file là số), xử lý trường hợp tên file không phải số
-          files.sort(key=lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 999999, reverse=True)
+          
+          # Sắp xếp: ưu tiên số từ lớn đến bé, nếu không phải số thì cho xuống cuối
+          def sort_key(name):
+              base = name.split('.')[0]
+              return (int(base) if base.isdigit() else -1)
+
+          files.sort(key=sort_key, reverse=True)
 
           for filename in files:
               try:
                   with Image.open(filename) as img:
-                      width, height = img.size
+                      w, h = img.size
+                      num_part = filename.split('.')[0]
                       results.append({
-                          'i': int(filename.split('.')[0]) if filename.split('.')[0].isdigit() else filename.split('.')[0],
-                          'w': width,
-                          'h': height
+                          'i': int(num_part) if num_part.isdigit() else num_part,
+                          'w': w,
+                          'h': h
                       })
               except Exception as e:
-                  print(f'Error processing {filename}: {e}')
+                  print(f'Lỗi file {filename}: {e}')
 
-          with open('images.json', 'w') as f:
-              json.dump(results, f)
+          with open('images.json', 'w', encoding='utf-8') as f:
+              json.dump(results, f, ensure_ascii=False, indent=2)
           "
-          echo "Generated images.json with metadata:"
-          cat images.json
 
       - name: Commit and Push
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add images.json
-
-          # Chỉ commit nếu có thay đổi
+          
+          # Chỉ push nếu có thay đổi thực sự
           if git diff --staged --quiet; then
-            echo "No changes"
+            echo "Không có thay đổi trong images.json"
           else
-            git commit -m " Auto-update images list [skip ci]"
+            git commit -m "Auto-update images.json [skip ci]"
+            git pull --rebase origin main
             git push
           fi
